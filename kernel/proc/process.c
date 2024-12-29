@@ -53,16 +53,16 @@ int sys_fork()
 void put_exe_pages()
 {
 	unsigned long page = 0;
-	unsigned long size;
+	unsigned long total = (current->exe_end + PAGE_SIZE - 1) / PAGE_SIZE;
+	
+	page = get_page(total); // 一次性内存分配
 
-	for (size = 0; size < current->exe_end; size += BLOCK_SIZE, page += BLOCK_SIZE)
+	for(int i = 0; i < total; i++)
 	{
-		if (size % PAGE_SIZE == 0)
-		{
-			page = get_page(1);
-			put_page(current, size, page, PTE_PLV | PTE_D | PTE_V);
-		}
-		read_inode_block(current->executable, size / BLOCK_SIZE + 1, (char *)page, BLOCK_SIZE);
+		page += i * PAGE_SIZE;
+		put_page(current, i * PAGE_SIZE, page, PTE_PLV | PTE_D | PTE_V);
+		for(int j = 0; j < PAGE_SIZE / BLOCK_SIZE; j++)
+			read_inode_block(current->executable, i * PAGE_SIZE / BLOCK_SIZE + j + 1, (char *)(page + j * BLOCK_SIZE), BLOCK_SIZE);
 	}
 }
 int sys_exe(char *filename, char *arg)
