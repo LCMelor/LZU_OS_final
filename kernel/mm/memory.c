@@ -16,26 +16,6 @@
 #define PWCL_EWIDTH 0
 #define ENTRYS 512
 
-char mem_map[NR_PAGE];
-
-// unsigned long get_page()
-// {
-// 	unsigned long page;
-// 	unsigned long i;
-
-// 	for (i = NR_PAGE - 1; i >= 0; i--)
-// 	{
-// 		if (mem_map[i] != 0)
-// 			continue;
-// 		mem_map[i] = 1;
-// 		page = (i << 12) | DMW_MASK;
-// 		set_mem((char *)page, 0, PAGE_SIZE);
-// 		return page;
-// 	}
-// 	panic("panic: out of memory!\n");
-// 	return 0;
-// }
-
 unsigned long get_page(int size)
 {
 	unsigned long page;
@@ -57,16 +37,6 @@ unsigned long get_page(int size)
 	
     return page;
 }
-
-// void free_page(unsigned long page)
-// {
-// 	unsigned long i;
-
-// 	i = (page & ~DMW_MASK) >> 12;
-// 	if (!mem_map[i])
-// 		panic("panic: try to free free page!\n");
-// 	mem_map[i]--;
-// }
 
 void free_page(unsigned long page)
 {
@@ -166,15 +136,6 @@ void copy_page_table(struct process *from, struct process *to)
 }
 void mem_init()
 {
-	int i;
-
-	for (i = 0; i < NR_PAGE; i++)
-	{
-		if (i >= KERNEL_START_PAGE && i < KERNEL_END_PAGE)
-			mem_map[i] = 1;
-		else
-			mem_map[i] = 0;
-	}
 	write_csr_64(CSR_DMW0_PLV0 | DMW_MASK, CSR_DMW0);
 	write_csr_64(0, CSR_DMW3);
 	write_csr_64((PWCL_EWIDTH << 30) | (PWCL_PDWIDTH << 15) | (PWCL_PDBASE << 10) | (PWCL_PTWIDTH << 5) | (PWCL_PTBASE << 0), CSR_PWCL);

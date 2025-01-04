@@ -16,24 +16,6 @@ typedef struct seg_buddy_node {
 
 seg_buddy_node seg_buddy_table[MAX_PAGE_NUM][10]; // 保存多次分配时每个部分块的信息
 
-// 位图数组，表示每个物理页的分配状态
-static unsigned long buddy_bitmap[MAX_PAGE_NUM / 64];
-
-// 设置位图某一位为1
-static inline void set_bit(int idx) {
-    buddy_bitmap[idx / 64] |= (1UL << (idx % 64));
-}
-
-// 设置位图某一位为0
-static inline void clear_bit(int idx) {
-    buddy_bitmap[idx / 64] &= ~(1UL << (idx % 64));
-}
-
-// 检查位图某一位是否为1
-static inline int test_bit(int idx) {
-    return buddy_bitmap[idx / 64] & (1UL << (idx % 64));
-}
-
 // 空闲表节点，表示每个空闲块的信息
 typedef struct buddy_free_node {
     int page_index_start; // 空闲块起始页的索引
@@ -85,11 +67,6 @@ void buddy_free(void* ptr) {
 
 // 初始化伙伴系统
 void init_buddy() {
-    // 初始化位图，所有位都清零，表示物理页未分配
-    for (int i = 0; i < MAX_PAGE_NUM / 64; i++) {
-        buddy_bitmap[i] = 0;
-    }
-
     // 初始化空闲表，设置每个阶数的链表头尾为NULL，表示链表为空
     for (int i = 0; i <= MAX_ORDER; i++) {
         free_table.head[i] = NULL;
@@ -108,9 +85,6 @@ void init_buddy() {
     new_node->prev = NULL;
     new_node->next = NULL;
     free_table.head[MAX_ORDER] = free_table.tail[MAX_ORDER] = new_node;
-
-    // 将整个物理页标记为已分配
-    set_bit(0);
 }
 
 // 计算所需的阶数（根据请求的大小）
@@ -248,9 +222,6 @@ int get_page_buddy(int size) {
                 }
             }
 
-            // 标记该块为已分配
-            set_bit(page_start);
-
             seg_buddy_table[page_start][0].page_index_start = page_start;
             seg_buddy_table[page_start][0].order = order;
             seg_buddy_table[page_start][0].successor_exit = 0;
@@ -313,8 +284,6 @@ void free_buddy_page_once(int page) {
     // 从分配表中移除该块
     remove_occu_node(found_node, found_order);
 
-    // 标记该页面为未分配
-    clear_bit(page);
 
     // 释放后尝试能否合并相邻伙伴块
     int current_order = found_order;
