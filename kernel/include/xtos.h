@@ -8,7 +8,7 @@
 #define TASK_UNINTERRUPTIBLE 1
 #define TASK_INTERRUPTIBLE 2
 #define TASK_EXIT 3
-
+#define MAX_PAGE_NUM  32768 // 定义物理页面的最大数量
 struct context
 {
 	unsigned long ra, sp;
@@ -35,6 +35,11 @@ struct inode
 	char type;
 	char filename[NAME_LEN];
 };
+typedef struct seg_buddy_node {
+    int page_index_start; // 起始页的索引
+    int order; // 阶数
+    int successor_exit; // 后继节点是否存在
+} seg_buddy_node;
 void printk(char *);
 void con_init();
 void panic(char *);

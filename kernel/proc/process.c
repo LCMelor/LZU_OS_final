@@ -26,6 +26,9 @@ char proc0_code[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
+
+extern seg_buddy_node seg_buddy_table[MAX_PAGE_NUM][10];
+
 int sys_fork()
 {
 	int i;
@@ -57,13 +60,31 @@ void put_exe_pages()
 	
 	page = get_page(total); // 一次性内存分配
 
-	for(int i = 0; i < total; i++)
-	{
-		page += i * PAGE_SIZE;
-		put_page(current, i * PAGE_SIZE, page, PTE_PLV | PTE_D | PTE_V);
-		for(int j = 0; j < PAGE_SIZE / BLOCK_SIZE; j++)
-			read_inode_block(current->executable, i * PAGE_SIZE / BLOCK_SIZE + j + 1, (char *)(page + j * BLOCK_SIZE), BLOCK_SIZE);
-	}
+	int page_i = (page & ~DMW_MASK) >> 12;
+
+	int i = 0;
+	unsigned long vaddr = 0; // 连续的虚拟页起始地址
+	int vpage_index = 0; // 连续的虚拟页索引
+
+	// 逐个分配小块内存
+	do {
+	    unsigned long seg_page = seg_buddy_table[page_i][i].page_index_start;
+		seg_page = (seg_page << 12) | DMW_MASK;
+	    unsigned long seg_total = 1 << seg_buddy_table[page_i][i].order;
+
+	    for (int j = 0; j < seg_total; j++) {
+	        unsigned long physical_page = seg_page + j * PAGE_SIZE;
+	        put_page(current, vaddr, physical_page, PTE_PLV | PTE_D | PTE_V);
+
+	        for (int k = 0; k < PAGE_SIZE / BLOCK_SIZE; k++) {
+	            read_inode_block(current->executable, vpage_index * PAGE_SIZE / BLOCK_SIZE + k + 1, (char *)(physical_page + k * BLOCK_SIZE), BLOCK_SIZE);
+	        }
+	        vaddr += PAGE_SIZE;
+	        vpage_index++;
+	    }
+
+	    i++;
+	} while (seg_buddy_table[page_i][i].successor_exit == 1);
 }
 int sys_exe(char *filename, char *arg)
 {

@@ -4,6 +4,18 @@
 
 typedef unsigned int size_t;
 
+void free_buddy_page_once(int page);
+void free_buddy_page(int page);
+int get_page_buddy(int size);
+
+typedef struct seg_buddy_node {
+    int page_index_start; // 起始页的索引
+    int order; // 阶数
+    int successor_exit; // 后继节点是否存在
+} seg_buddy_node;
+
+seg_buddy_node seg_buddy_table[MAX_PAGE_NUM][10]; // 保存多次分配时每个部分块的信息
+
 // 位图数组，表示每个物理页的分配状态
 static unsigned long buddy_bitmap[MAX_PAGE_NUM / 64];
 
@@ -112,6 +124,78 @@ static int calculate_order(int size) {
     return order;
 }
 
+// 从空闲表中移除节点
+void remove_free_node(buddy_free_node *node, int current_order) {
+    if (free_table.head[current_order] == node) {
+        free_table.head[current_order] = node->next;
+    }
+    if (free_table.tail[current_order] == node) {
+        free_table.tail[current_order] = node->prev;
+    }
+        if (node->prev != NULL) {
+        node->prev->next = node->next;
+    }
+    if (node->next != NULL) {
+        node->next->prev = node->prev;
+    }
+}
+
+// 从分配表中移除节点
+void remove_occu_node(buddy_occu_node *node, int current_order) {
+    if (occu_table.head[current_order] == node) {
+        occu_table.head[current_order] = node->next;
+    }
+    if (occu_table.tail[current_order] == node) {
+        occu_table.tail[current_order] = node->prev;
+    }
+    if (node->prev != NULL) {
+        node->prev->next = node->next;
+    }
+    if (node->next != NULL) {
+        node->next->prev = node->prev;
+    }
+}
+
+// 分配小块内存
+int malloc_seg_buddy(int order, seg_buddy_node *tmp, int tmp_pointer)
+{
+    int current_order = order;
+
+    while(current_order > 0) {
+        if (free_table.head[current_order] != NULL) {
+            // 找到可用的空闲块
+            buddy_free_node *node = free_table.head[current_order];
+            int page_start = node->page_index_start;
+
+            tmp[tmp_pointer].page_index_start = page_start;
+            tmp[tmp_pointer].order = current_order;
+            tmp[tmp_pointer].successor_exit = 1;
+
+            // 从空闲表中移除该块
+            remove_free_node(node, current_order);
+
+            // 将块添加到分配表中
+            buddy_occu_node *occu_node = (buddy_occu_node*)buddy_malloc(sizeof(buddy_occu_node));
+            occu_node->page_index_start = page_start;
+            occu_node->prev = NULL;
+            occu_node->next = occu_table.head[order];
+            if (occu_table.head[order] != NULL) {
+                occu_table.head[order]->prev = occu_node;
+            }
+            occu_table.head[order] = occu_node;
+            if (occu_table.tail[order] == NULL) {
+                occu_table.tail[order] = occu_node;
+            }
+            
+            return current_order;
+        }
+        current_order--;
+    }
+    return -1;
+}
+
+
+
 // 获取所需大小的物理页，返回起始物理页地址，分配失败返回-1
 int get_page_buddy(int size) {
     if (size <= 0 || size > (1 << MAX_ORDER)) {
@@ -130,18 +214,7 @@ int get_page_buddy(int size) {
             int page_start = node->page_index_start;
 
             // 从空闲表中移除该块
-            if (free_table.head[current_order] == node) {
-                free_table.head[current_order] = node->next;
-            }
-            if (free_table.tail[current_order] == node) {
-                free_table.tail[current_order] = node->prev;
-            }
-            if (node->prev != NULL) {
-                node->prev->next = node->next;
-            }
-            if (node->next != NULL) {
-                node->next->prev = node->prev;
-            }
+            remove_free_node(node, current_order);
 
             // 将块添加到分配表中
             buddy_occu_node *occu_node = (buddy_occu_node*)buddy_malloc(sizeof(buddy_occu_node));
@@ -178,16 +251,48 @@ int get_page_buddy(int size) {
             // 标记该块为已分配
             set_bit(page_start);
 
+            seg_buddy_table[page_start][0].page_index_start = page_start;
+            seg_buddy_table[page_start][0].order = order;
+            seg_buddy_table[page_start][0].successor_exit = 0;
             return page_start;
         }
         current_order++;
     }
 
-    return -1;  // 无法找到合适的空闲块
+    // 无法找到合适的空闲块
+    int current_size = size;
+    seg_buddy_node tmp[10]; // 暂存每次分配的块的信息
+    int tmp_pointer = 0;
+
+    // 逐步分配小块，直到分配成功
+    while(current_size > 0 && tmp_pointer < 10) {
+        int current_order = calculate_order(current_size);
+        int found_order = malloc_seg_buddy(current_order, tmp, tmp_pointer);
+        int found_size = 1 << found_order;
+
+        if (found_order == -1) {
+            // 没有足够的空闲块
+            for (int i = 0; i < current_size; i++) {
+                free_buddy_page_once(tmp[i].page_index_start);
+            }
+            return -1;
+        }
+        current_size -= found_size;
+        tmp_pointer++;
+    }
+
+    // 将分配的块的信息保存到分配表中
+    for(int i = 0; i < tmp_pointer; i++) {
+        seg_buddy_table[tmp[i].page_index_start][i].page_index_start = tmp[i].page_index_start;
+        seg_buddy_table[tmp[i].page_index_start][i].order = tmp[i].order;
+    }
+    tmp[tmp_pointer - 1].successor_exit = 0;
+    
+    return tmp[0].page_index_start;
 }
 
-// 释放已分配的物理页
-void free_buddy_page(int page) {
+// 释放一个已分配的物理页
+void free_buddy_page_once(int page) {
     // 查找要释放的页面在分配表中的位置
     int found_order = -1;
     buddy_occu_node *found_node = NULL;
@@ -206,18 +311,7 @@ void free_buddy_page(int page) {
     if (found_order == -1) return;  // 页面未被分配，释放失败
 
     // 从分配表中移除该块
-    if (occu_table.head[found_order] == found_node) {
-        occu_table.head[found_order] = found_node->next;
-    }
-    if (occu_table.tail[found_order] == found_node) {
-        occu_table.tail[found_order] = found_node->prev;
-    }
-    if (found_node->prev != NULL) {
-        found_node->prev->next = found_node->next;
-    }
-    if (found_node->next != NULL) {
-        found_node->next->prev = found_node->prev;
-    }
+    remove_occu_node(found_node, found_order);
 
     // 标记该页面为未分配
     clear_bit(page);
@@ -237,18 +331,7 @@ void free_buddy_page(int page) {
                 found_buddy = 1;
 
                 // 从空闲表中移除伙伴块
-                if (free_table.head[current_order] == node) {
-                    free_table.head[current_order] = node->next;
-                }
-                if (free_table.tail[current_order] == node) {
-                    free_table.tail[current_order] = node->prev;
-                }
-                if (node->prev != NULL) {
-                    node->prev->next = node->next;
-                }
-                if (node->next != NULL) {
-                    node->next->prev = node->prev;
-                }
+                remove_free_node(node, current_order);
 
                 // 准备下一次合并
                 current_page = (current_page < buddy_page) ? current_page : buddy_page;
@@ -272,4 +355,14 @@ void free_buddy_page(int page) {
     if (free_table.tail[current_order] == NULL) {
         free_table.tail[current_order] = new_node;
     }
+}
+
+void free_buddy_page(int page)
+{
+    int i = 0;
+    while(seg_buddy_table[page][i].successor_exit) {
+        free_buddy_page_once(seg_buddy_table[page][i].page_index_start);
+        i++;
+    }
+    free_buddy_page_once(seg_buddy_table[page][i].page_index_start);
 }
